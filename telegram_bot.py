@@ -3,10 +3,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from check_availability import check_facility_availability 
 import bot_booking
 from datetime import datetime, timedelta
+import requests
 
 BOT_TOKEN = ''
 
-FACILITY, DATE, TIME = range(3)
+FACILITY, DATE, TIME, CREDENTIAL = range(4)
 
 FACILITIES = ["badminton", "pickleball", "tennis", "pingpong", "snooker", "futsal", "squash", "karaoke_room"]
 
@@ -86,8 +87,6 @@ async def receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text.strip()
-    facility = context.user_data.get("facility")
-    date = context.user_data.get("date")
     available_slots = context.user_data.get("available_slots", [])
 
     valid_slots = [slot.strip() for slot in available_slots]
@@ -103,19 +102,50 @@ async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data["time"] = user_input
 
+    return CREDENTIAL
+
+async def receive_credientials(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    facility = context.user_data.get("facility")
+    date = context.user_data.get("date")
+    time = context.user_data.get("time")
+
+    await update.message.reply_text("Please type your student intranet username.")
+    username_input = update.message.text.strip()
+    context.user_data["username"] = username_input
+
+    await update.message.reply_text("Please type your student intranet password.")
+    password_input = update.message.text.strip()
+    context.user_data["password"] = password_input
+
+    username = context.user_data.get("username")
+    password = context.user_data.get("password")
+
+    try:
+        session = requests.Session()
+        login_response = bot_booking.login_as(session, username, password)
+        if "Dashboard" not in login_response.text:
+            await update.message.reply_text("Login failed. Credential inaccurate.")
+            return CREDENTIAL
+    except Exception:
+        return "Login error."
+
+    booking_payload = {
+
+    }
+
     if datetime.strptime(date, "%d/%m/%Y").date() > datetime.now().date() + timedelta(days=2):
         await update.message.reply_text(
-            f"✅ You have selected:\nFacility: {facility}\nDate: {date}\nTime: {user_input}\n\nBooking had been scheduled",
+            f"✅ You have selected:\nFacility: {facility}\nDate: {date}\nTime: {time}\n\nBooking had been scheduled",
             reply_markup=ReplyKeyboardRemove()
         )
     else:
         await update.message.reply_text(
-            f"✅ You have selected:\nFacility: {facility}\nDate: {date}\nTime: {user_input}\n\nBooking in progress...",
+            f"✅ You have selected:\nFacility: {facility}\nDate: {date}\nTime: {time}\n\nBooked.",
             reply_markup=ReplyKeyboardRemove()
         )
-    return ConversationHandler.END
+        bot_booking.book_venue(session, booking_payload)
 
-#async def receive_credientials(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Booking process canceled.")
@@ -129,6 +159,7 @@ conv_handler = ConversationHandler(
         FACILITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_facility)],
         DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_date)],
         TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_time)],
+        CREDENTIAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_credientials)],
     },
     fallbacks=[CommandHandler("cancel", cancel)]
 )
